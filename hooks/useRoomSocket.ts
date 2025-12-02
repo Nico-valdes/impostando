@@ -1,4 +1,4 @@
-\"use client\";
+"use client";
 
 import { useEffect, useRef, useState } from "react";
 import { io, Socket } from "socket.io-client";
@@ -9,6 +9,7 @@ export type GameCard = {
   team: string;
   sport: "football" | "basketball" | "custom" | "all";
   isImpostor: boolean;
+  imageUrl?: string | null;
 };
 
 export type RoomState = {
@@ -73,61 +74,112 @@ export function useRoomSocket({
   const [myCard, setMyCard] = useState<GameCard | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const socketRef = useRef<Socket | null>(null);
+  const onCardReceivedRef = useRef<UseRoomSocketArgs["onCardReceived"]>();
+  const onGameEndedRef = useRef<UseRoomSocketArgs["onGameEnded"]>();
+
+  useEffect(() => {
+    onCardReceivedRef.current = onCardReceived;
+  }, [onCardReceived]);
+
+  useEffect(() => {
+    onGameEndedRef.current = onGameEnded;
+  }, [onGameEnded]);
 
   useEffect(() => {
     const url =
       process.env.NEXT_PUBLIC_WS_URL || "http://localhost:4000";
 
-    const socket = io(`${url}/rooms/${roomCode}`, {
-      transports: ["websocket"],
-      query: {
-        name: playerName,
-        host: isHost ? "1" : "0",
-      },
-    });
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+    let reconnectTimer: NodeJS.Timeout | null = null;
 
-    socketRef.current = socket;
+    const connect = () => {
+      const socket = io(`${url}/rooms/${roomCode}`, {
+        transports: ["websocket"],
+        query: {
+          name: playerName,
+          host: isHost ? "1" : "0",
+        },
+        reconnection: true,
+        reconnectionDelay: 2000,
+        reconnectionDelayMax: 5000,
+        reconnectionAttempts: maxReconnectAttempts,
+      });
 
-    socket.on("connect", () => {
-      setConnected(true);
-    });
+      socketRef.current = socket;
 
-    socket.on("disconnect", () => {
-      setConnected(false);
-    });
+      socket.on("connect", () => {
+        console.log("✅ Conectado al servidor de socket");
+        setConnected(true);
+        reconnectAttempts = 0;
+        // Enviamos los settings iniciales solo una vez al conectar
+        socket.emit("update_settings", initialSettings);
+      });
 
-    socket.on("room_state", (state: RoomState) => {
-      setRoomState(state);
-    });
+      socket.on("connect_error", (error) => {
+        console.error("❌ Error de conexión:", error.message);
+        setConnected(false);
+      });
 
-    socket.on("your_card", (card: GameCard) => {
-      setMyCard(card);
-      if (onCardReceived) onCardReceived(card);
-    });
+      socket.on("disconnect", (reason) => {
+        console.log("🔌 Desconectado:", reason);
+        setConnected(false);
+        if (reason === "io server disconnect") {
+          // El servidor desconectó, intentar reconectar manualmente
+          if (reconnectAttempts < maxReconnectAttempts) {
+            reconnectAttempts++;
+            reconnectTimer = setTimeout(() => {
+              connect();
+            }, 2000);
+          }
+        }
+      });
 
-    socket.on("chat_message", (msg: ChatMessage) => {
-      setMessages((prev) => [...prev, msg].slice(-80));
-    });
+      socket.on("reconnect_attempt", (attemptNumber) => {
+        reconnectAttempts = attemptNumber;
+      });
 
-    socket.on("game_ended", (summary) => {
-      if (onGameEnded) onGameEnded(summary);
-    });
+      socket.on("reconnect_failed", () => {
+        console.error("No se pudo reconectar después de varios intentos");
+      });
 
-    socket.on("kicked", () => {
-      alert("Has sido expulsado de la sala por el host.");
-    });
+      socket.on("room_state", (state: RoomState) => {
+        setRoomState(state);
+      });
 
-    socket.on("room_locked", () => {
-      alert("La sala está bloqueada y no acepta nuevos jugadores.");
-    });
+      socket.on("your_card", (card: GameCard) => {
+        setMyCard(card);
+        if (onCardReceivedRef.current) onCardReceivedRef.current(card);
+      });
 
-    socket.emit("update_settings", initialSettings);
+      socket.on("chat_message", (msg: ChatMessage) => {
+        setMessages((prev) => [...prev, msg].slice(-80));
+      });
+
+      socket.on("game_ended", (summary) => {
+        if (onGameEndedRef.current) onGameEndedRef.current(summary);
+      });
+
+      socket.on("kicked", () => {
+        alert("Has sido expulsado de la sala por el host.");
+      });
+
+      socket.on("room_locked", () => {
+        alert("La sala está bloqueada y no acepta nuevos jugadores.");
+      });
+    };
+
+    connect();
 
     return () => {
-      socket.disconnect();
-      socketRef.current = null;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (socketRef.current) {
+        socketRef.current.disconnect();
+        socketRef.current = null;
+      }
     };
-  }, [roomCode, playerName, isHost, initialSettings, onCardReceived, onGameEnded]);
+    // Solo debe recrearse cuando cambia realmente la identidad de la sala / jugador
+  }, [roomCode, playerName, isHost, initialSettings]);
 
   const emit = (event: string, payload?: unknown) => {
     if (!socketRef.current) return;

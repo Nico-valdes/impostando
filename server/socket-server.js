@@ -49,20 +49,92 @@ const io = new Server(server, {
 // Datos de ejemplo / fallback para cartas
 const SAMPLE_PLAYERS = {
   football: [
-    { name: "Lionel Messi", team: "Inter Miami", sport: "football" },
-    { name: "Kylian Mbappé", team: "Real Madrid", sport: "football" },
-    { name: "Erling Haaland", team: "Manchester City", sport: "football" },
-    { name: "Vinícius Jr.", team: "Real Madrid", sport: "football" },
-    { name: "Kevin De Bruyne", team: "Manchester City", sport: "football" },
-    { name: "Jude Bellingham", team: "Real Madrid", sport: "football" },
+    {
+      name: "Lionel Messi",
+      team: "Inter Miami",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Lionel+Messi",
+    },
+    {
+      name: "Kylian Mbappé",
+      team: "Real Madrid",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Kylian+Mbapp%C3%A9",
+    },
+    {
+      name: "Erling Haaland",
+      team: "Manchester City",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Erling+Haaland",
+    },
+    {
+      name: "Vinícius Jr.",
+      team: "Real Madrid",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Vinicius+Jr",
+    },
+    {
+      name: "Kevin De Bruyne",
+      team: "Manchester City",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Kevin+De+Bruyne",
+    },
+    {
+      name: "Jude Bellingham",
+      team: "Real Madrid",
+      sport: "football",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=0F172A&color=fff&name=Jude+Bellingham",
+    },
   ],
   basketball: [
-    { name: "LeBron James", team: "Los Angeles Lakers", sport: "basketball" },
-    { name: "Stephen Curry", team: "Golden State Warriors", sport: "basketball" },
-    { name: "Giannis Antetokounmpo", team: "Milwaukee Bucks", sport: "basketball" },
-    { name: "Nikola Jokić", team: "Denver Nuggets", sport: "basketball" },
-    { name: "Luka Dončić", team: "Dallas Mavericks", sport: "basketball" },
-    { name: "Jayson Tatum", team: "Boston Celtics", sport: "basketball" },
+    {
+      name: "LeBron James",
+      team: "Los Angeles Lakers",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=LeBron+James",
+    },
+    {
+      name: "Stephen Curry",
+      team: "Golden State Warriors",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=Stephen+Curry",
+    },
+    {
+      name: "Giannis Antetokounmpo",
+      team: "Milwaukee Bucks",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=Giannis+Antetokounmpo",
+    },
+    {
+      name: "Nikola Jokić",
+      team: "Denver Nuggets",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=Nikola+Jokic",
+    },
+    {
+      name: "Luka Dončić",
+      team: "Dallas Mavericks",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=Luka+Doncic",
+    },
+    {
+      name: "Jayson Tatum",
+      team: "Boston Celtics",
+      sport: "basketball",
+      imageUrl:
+        "https://ui-avatars.com/api/?background=111827&color=fff&name=Jayson+Tatum",
+    },
   ],
 };
 
@@ -108,35 +180,149 @@ function getRandomInt(max) {
   return Math.floor(Math.random() * max);
 }
 
+// TheSportsDB API helper functions
+const THESPORTSDB_API_KEY = "123"; // Free API key
+const THESPORTSDB_BASE = "https://www.thesportsdb.com/api/v1/json";
+
+async function searchTeamsFromTheSportsDB(teamName) {
+  try {
+    const url = `${THESPORTSDB_BASE}/${THESPORTSDB_API_KEY}/searchteams.php?t=${encodeURIComponent(teamName)}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      return data.teams || [];
+    }
+  } catch (e) {
+    // Silently fail
+  }
+  return [];
+}
+
+async function searchPlayersFromTheSportsDB(playerName) {
+  try {
+    const url = `${THESPORTSDB_BASE}/${THESPORTSDB_API_KEY}/searchplayers.php?p=${encodeURIComponent(playerName)}`;
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      return data.player || [];
+    }
+  } catch (e) {
+    // Silently fail
+  }
+  return [];
+}
+
+async function fetchFootballPlayersFromTheSportsDB() {
+  const players = [];
+  // Buscar jugadores famosos de fútbol directamente por nombre
+  // Esto es más eficiente que buscar equipos primero
+  const famousNames = [
+    "Lionel Messi",
+    "Cristiano Ronaldo",
+    "Kylian Mbappé",
+    "Erling Haaland",
+    "Karim Benzema",
+    "Neymar",
+    "Kevin De Bruyne",
+    "Mohamed Salah",
+  ];
+
+  // Limitar a 4-5 jugadores para no exceder rate limits (30 req/min gratis)
+  for (const name of famousNames.slice(0, 5)) {
+    try {
+      const playerResults = await searchPlayersFromTheSportsDB(name);
+      if (playerResults && Array.isArray(playerResults) && playerResults.length > 0) {
+        const p = playerResults[0];
+        // TheSportsDB devuelve strThumb (foto) o strCutout (recorte)
+        const imageUrl = p.strThumb
+          ? `${p.strThumb}/preview`
+          : p.strCutout
+          ? `${p.strCutout}/preview`
+          : null;
+
+        players.push({
+          name: p.strPlayer || name,
+          team: p.strTeam || "Unknown",
+          sport: "football",
+          imageUrl,
+        });
+      }
+      // Pequeña pausa para evitar rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch (e) {
+      // Continue with next player
+    }
+  }
+  return players;
+}
+
+async function fetchBasketballPlayersFromTheSportsDB() {
+  const players = [];
+  // Buscar jugadores famosos de NBA directamente por nombre
+  const famousNames = [
+    "LeBron James",
+    "Stephen Curry",
+    "Kevin Durant",
+    "Giannis Antetokounmpo",
+    "Luka Doncic",
+    "Jayson Tatum",
+    "Nikola Jokic",
+  ];
+
+  // Limitar a 4-5 jugadores para no exceder rate limits
+  for (const name of famousNames.slice(0, 5)) {
+    try {
+      const playerResults = await searchPlayersFromTheSportsDB(name);
+      if (playerResults && Array.isArray(playerResults) && playerResults.length > 0) {
+        const p = playerResults[0];
+        const imageUrl = p.strThumb
+          ? `${p.strThumb}/preview`
+          : p.strCutout
+          ? `${p.strCutout}/preview`
+          : null;
+
+        players.push({
+          name: p.strPlayer || name,
+          team: p.strTeam || "Unknown",
+          sport: "basketball",
+          imageUrl,
+        });
+      }
+      // Pequeña pausa para evitar rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    } catch (e) {
+      // Continue
+    }
+  }
+  return players;
+}
+
 async function buildDeckForRoom(room) {
   const settings = room.settings;
 
   let pool = [];
   if (settings.sport === "football" || settings.sport === "all") {
     pool = pool.concat(SAMPLE_PLAYERS.football);
-  }
-  if (settings.sport === "basketball" || settings.sport === "all") {
-    pool = pool.concat(SAMPLE_PLAYERS.basketball);
-  }
-
-  // Intento de añadir jugadores NBA desde balldontlie como ejemplo de API pública
-  if (settings.sport === "basketball" || settings.sport === "all") {
+    // Intentar obtener jugadores reales desde TheSportsDB
     try {
-      const res = await fetch(
-        "https://api.balldontlie.io/v1/players?per_page=25&page=1",
-      );
-      if (res.ok) {
-        const data = await res.json();
-        const apiPlayers =
-          data.data?.map((p) => ({
-            name: `${p.first_name} ${p.last_name}`,
-            team: p.team?.full_name || "Unknown",
-            sport: "basketball",
-          })) ?? [];
+      const apiPlayers = await fetchFootballPlayersFromTheSportsDB();
+      if (apiPlayers.length > 0) {
         pool = pool.concat(apiPlayers);
       }
     } catch (e) {
-      // Si la API falla, seguimos con los datos locales
+      // Si falla, seguimos con datos locales
+    }
+  }
+  if (settings.sport === "basketball" || settings.sport === "all") {
+    pool = pool.concat(SAMPLE_PLAYERS.basketball);
+    // Intentar obtener jugadores reales desde TheSportsDB
+    try {
+      const apiPlayers = await fetchBasketballPlayersFromTheSportsDB();
+      if (apiPlayers.length > 0) {
+        pool = pool.concat(apiPlayers);
+      }
+    } catch (e) {
+      // Si falla, seguimos con datos locales
     }
   }
 
@@ -145,6 +331,7 @@ async function buildDeckForRoom(room) {
       name: label,
       team: "Custom",
       sport: settings.sport === "all" ? "custom" : settings.sport,
+      imageUrl: null,
     }));
     pool = pool.concat(custom);
   }
@@ -165,17 +352,33 @@ async function buildDeckForRoom(room) {
     impostorIndexes.add(getRandomInt(totalPlayers));
   }
 
+  // Lógica de juego tipo "impostor":
+  // - Todas las personas de tripulación ven la MISMA carta de jugador real.
+  // - Todos los impostores ven una carta especial que dice claramente "IMPOSTOR".
+
   const deck = {};
 
+  // Elegimos una carta base para la tripulación
+  const crewBase = pool[getRandomInt(pool.length)];
+
+  // Carta fija para impostor: deja claro el rol, sin confundir con otro jugador
+  const impostorBase = {
+    name: "IMPOSTOR",
+    team: "Tu carta es distinta. Engaña al resto sin que lo noten.",
+    sport: crewBase.sport,
+    imageUrl: null,
+  };
+
   playersArray.forEach((player, index) => {
-    const cardIndex = getRandomInt(pool.length);
-    const base = pool[cardIndex];
+    const isImpostor = impostorIndexes.has(index);
+    const base = isImpostor ? impostorBase : crewBase;
     deck[player.id] = {
       id: `${room.code}-${player.id}`,
       playerName: base.name,
       team: base.team,
       sport: base.sport,
-      isImpostor: impostorIndexes.has(index),
+      isImpostor,
+      imageUrl: base.imageUrl || null,
     };
   });
 
