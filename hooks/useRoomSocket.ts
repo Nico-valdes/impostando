@@ -74,8 +74,8 @@ export function useRoomSocket({
   const [myCard, setMyCard] = useState<GameCard | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const socketRef = useRef<Socket | null>(null);
-  const onCardReceivedRef = useRef<UseRoomSocketArgs["onCardReceived"]>();
-  const onGameEndedRef = useRef<UseRoomSocketArgs["onGameEnded"]>();
+  const onCardReceivedRef = useRef<UseRoomSocketArgs["onCardReceived"] | undefined>(undefined);
+  const onGameEndedRef = useRef<UseRoomSocketArgs["onGameEnded"] | undefined>(undefined);
 
   useEffect(() => {
     onCardReceivedRef.current = onCardReceived;
