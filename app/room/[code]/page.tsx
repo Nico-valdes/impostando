@@ -180,8 +180,10 @@ export default function RoomPage() {
   };
 
   const handleShare = async () => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    const success = await share(url, "Únete a mi partida de Impostando");
+    // Solo compartir el código de la sala, sin parámetros
+    const baseUrl = typeof window !== "undefined" ? window.location.origin : "";
+    const shareUrl = `${baseUrl}/room/${roomCode}`;
+    const success = await share(shareUrl, "Únete a mi partida de Impostando");
     if (success && !copied) {
       notify("Link compartido");
     } else if (success && copied) {
