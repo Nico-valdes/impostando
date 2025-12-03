@@ -1,7 +1,7 @@
 "use client";
 
-import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useParams, useSearchParams, useRouter } from "next/navigation";
+import React, { useEffect, useMemo, useState, useRef, useImperativeHandle, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRoomSocket, type RoomState, type GameCard } from "../../../hooks/useRoomSocket";
 import { usePlayerStats } from "../../../hooks/usePlayerStats";
@@ -12,6 +12,7 @@ import { useShare } from "../../../hooks/useShare";
 import { PlayerSetupModal } from "../../../components/PlayerSetupModal";
 
 export default function RoomPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const params = useParams<{ code: string }>();
   const roomCode = (params.code ?? "").toUpperCase();
@@ -122,16 +123,17 @@ export default function RoomPage() {
     }
   }, [initialAvatarSeed, currentAvatarSeed, changeAvatar]);
 
-  // Actualizar avatar en el servidor cuando se conecta o cuando cambia el seed
+  // Actualizar avatar en el servidor cuando cambia el seed
   useEffect(() => {
-    if (connected && updateAvatar && effectiveAvatarSeed) {
+    if (connected && updateAvatar && avatarSeed && avatarSeed !== currentAvatarSeed) {
       // Pequeño delay para asegurar que el socket esté listo
       const timer = setTimeout(() => {
-        updateAvatar(effectiveAvatarSeed);
+        console.log("Actualizando avatar en servidor:", avatarSeed);
+        updateAvatar(avatarSeed);
       }, 300);
       return () => clearTimeout(timer);
     }
-  }, [connected, effectiveAvatarSeed, updateAvatar]);
+  }, [connected, avatarSeed, updateAvatar, currentAvatarSeed]);
 
   useEffect(() => {
     if (roomState && roomState.phase !== previousPhase) {
@@ -218,9 +220,10 @@ export default function RoomPage() {
                   className="group flex items-center gap-2 hover:bg-white/5 px-2 sm:px-3 py-1.5 transition-colors rounded-sm"
                 >
                   <img 
-                    src={avatar} 
+                    src={avatarSeed ? generateAvatarUrl(avatarSeed) : avatar} 
                     alt="Avatar" 
                     className="w-8 h-8 rounded-full border border-white/20"
+                    key={avatarSeed || currentAvatarSeed}
                   />
                   <span className="text-xs text-neutral-400 group-hover:text-white transition-colors max-w-[80px] truncate hidden sm:block">{playerName}</span>
                 </button>
@@ -236,27 +239,28 @@ export default function RoomPage() {
               
               {!showSetupModal && showAvatarPicker && (
                 <>
-                  {/* Overlay para cerrar en móvil */}
+                  {/* Overlay para cerrar en móvil - solo para detectar clicks fuera */}
                   <div 
-                    className="fixed inset-0 z-40 md:hidden"
+                    className="fixed inset-0 z-[100] lg:hidden"
                     onClick={() => setShowAvatarPicker(false)}
                   />
                   {/* Selector de avatar */}
-                  <div className="absolute top-full left-0 mt-2 p-3 sm:p-4 glass-panel w-[calc(100vw-2rem)] max-w-80 z-50 md:relative md:mt-2 md:left-auto md:w-80">
-                    <div className="flex items-center justify-between mb-3">
-                      <p className="text-xs text-neutral-500 uppercase tracking-wider">Cambiar Avatar</p>
+                  <div className="fixed left-4 right-4 top-20 sm:top-24 lg:absolute lg:left-auto lg:right-0 lg:top-full lg:translate-x-0 lg:translate-y-0 lg:mt-2 p-4 sm:p-5 bg-[rgba(10,10,10,0.95)] backdrop-blur-xl border border-white/10 rounded-sm shadow-2xl w-auto lg:w-96 max-w-sm z-[110] lg:z-50 max-h-[calc(100vh-6rem)] overflow-y-auto lg:glass-panel">
+                    <div className="flex items-center justify-between mb-4">
+                      <p className="text-xs text-neutral-500 uppercase tracking-wider font-medium">Cambiar Avatar</p>
                       <button
                         onClick={() => setShowAvatarPicker(false)}
-                        className="md:hidden text-neutral-400 hover:text-white text-lg"
+                        className="lg:hidden text-neutral-400 hover:text-white text-xl leading-none w-6 h-6 flex items-center justify-center"
+                        aria-label="Cerrar"
                       >
                         ✕
                       </button>
                     </div>
-                    <div className="space-y-3">
+                    <div className="space-y-3 sm:space-y-4">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs text-neutral-500">Página {avatarPickerPage + 1} / {totalAvatarPages}</span>
+                        <span className="text-xs text-neutral-400">{avatarPickerPage + 1} / {totalAvatarPages}</span>
                       </div>
-                      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                      <div className="grid grid-cols-4 gap-2 sm:gap-2.5">
                         {currentAvatarPageSeeds.map(seed => {
                           const avatarUrl = generateAvatarUrl(seed);
                           const isSelected = currentAvatarSeed === seed;
@@ -265,15 +269,30 @@ export default function RoomPage() {
                               key={seed}
                               onClick={(e) => { 
                                 e.stopPropagation(); 
-                                changeAvatar(seed); 
+                                // Actualizar el avatar localmente
+                                changeAvatar(seed);
+                                // Actualizar el estado del avatarSeed
+                                setAvatarSeed(seed);
+                                // Actualizar en el servidor
                                 if (updateAvatar && connected) {
                                   updateAvatar(seed);
+                                } else {
+                                  // Si no está conectado, intentar después de un delay
+                                  setTimeout(() => {
+                                    if (updateAvatar && connected) {
+                                      updateAvatar(seed);
+                                    }
+                                  }, 500);
                                 }
+                                // Actualizar URL
+                                const newParams = new URLSearchParams(searchParams.toString());
+                                newParams.set("avatarSeed", seed);
+                                window.history.replaceState({}, "", `${window.location.pathname}?${newParams.toString()}`);
                                 setShowAvatarPicker(false); 
                               }}
                               className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
                                 isSelected
-                                  ? "border-white scale-105"
+                                  ? "border-white scale-105 shadow-lg shadow-white/20"
                                   : "border-white/20 hover:border-white/40 active:scale-95"
                               }`}
                             >
@@ -283,8 +302,8 @@ export default function RoomPage() {
                                 className="w-full h-full object-cover"
                               />
                               {isSelected && (
-                                <div className="absolute inset-0 bg-white/10 flex items-center justify-center">
-                                  <span className="text-white text-sm">✓</span>
+                                <div className="absolute inset-0 bg-white/20 flex items-center justify-center">
+                                  <span className="text-white text-base font-bold">✓</span>
                                 </div>
                               )}
                             </button>
@@ -294,7 +313,7 @@ export default function RoomPage() {
                       
                       {/* Navegación de páginas */}
                       {totalAvatarPages > 1 && (
-                        <div className="flex items-center justify-between pt-2">
+                        <div className="flex items-center justify-between pt-2 sm:pt-3 border-t border-white/10">
                           <button
                             type="button"
                             onClick={(e) => {
@@ -302,11 +321,13 @@ export default function RoomPage() {
                               setAvatarPickerPage((prev) => Math.max(0, prev - 1));
                             }}
                             disabled={avatarPickerPage === 0}
-                            className="px-2 py-1 text-[10px] border border-white/20 hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="px-2 py-1.5 sm:px-3 text-[10px] sm:text-xs border border-white/20 hover:border-white/40 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-all rounded active:scale-95"
+                            aria-label="Página anterior"
                           >
-                            ←
+                            <span className="hidden sm:inline">← Anterior</span>
+                            <span className="sm:hidden">←</span>
                           </button>
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 sm:gap-1.5">
                             {Array.from({ length: totalAvatarPages }).map((_, i) => (
                               <button
                                 key={i}
@@ -315,11 +336,12 @@ export default function RoomPage() {
                                   e.stopPropagation();
                                   setAvatarPickerPage(i);
                                 }}
-                                className={`w-1.5 h-1.5 rounded-full transition-all ${
+                                className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full transition-all ${
                                   avatarPickerPage === i
-                                    ? "bg-white"
-                                    : "bg-white/20 hover:bg-white/40"
+                                    ? "bg-white scale-125"
+                                    : "bg-white/20 hover:bg-white/40 active:scale-110"
                                 }`}
+                                aria-label={`Ir a página ${i + 1}`}
                               />
                             ))}
                           </div>
@@ -330,9 +352,11 @@ export default function RoomPage() {
                               setAvatarPickerPage((prev) => Math.min(totalAvatarPages - 1, prev + 1));
                             }}
                             disabled={avatarPickerPage === totalAvatarPages - 1}
-                            className="px-2 py-1 text-[10px] border border-white/20 hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                            className="px-2 py-1.5 sm:px-3 text-[10px] sm:text-xs border border-white/20 hover:border-white/40 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-all rounded active:scale-95"
+                            aria-label="Página siguiente"
                           >
-                            →
+                            <span className="hidden sm:inline">Siguiente →</span>
+                            <span className="sm:hidden">→</span>
                           </button>
                         </div>
                       )}
@@ -352,13 +376,25 @@ export default function RoomPage() {
                           <span>{roomState?.players.length ?? 0} JUGADORES</span>
                         </div>
             
-            <button 
-              onClick={handleShare}
-              className="btn-secondary px-3 py-1.5 sm:px-4 sm:py-1.5 text-[10px] uppercase tracking-widest flex items-center gap-2"
-            >
-              <span className="sm:inline hidden">{copied ? "Copiado" : "Invitar"}</span>
-              <span className="sm:hidden text-base">🔗</span>
-            </button>
+                        <button 
+                          onClick={handleShare}
+                          className="btn-secondary px-3 py-1.5 sm:px-4 sm:py-1.5 text-[10px] uppercase tracking-widest flex items-center gap-2"
+                        >
+                          <span className="sm:inline hidden">{copied ? "Copiado" : "Invitar"}</span>
+                          <span className="sm:hidden text-base">🔗</span>
+                        </button>
+
+                        <button 
+                          onClick={() => {
+                            if (confirm("¿Salir de la sala?")) {
+                              router.push("/");
+                            }
+                          }}
+                          className="px-3 py-1.5 sm:px-4 sm:py-1.5 text-[10px] uppercase tracking-widest border border-white/20 hover:border-white/40 hover:bg-white/5 transition-all flex items-center gap-2"
+                        >
+                          <span className="sm:inline hidden">Salir</span>
+                          <span className="sm:hidden text-base">✕</span>
+                        </button>
 
             <button 
               className="lg:hidden p-2 -mr-2"
@@ -490,6 +526,7 @@ function LobbyOrGameView({
   playersPanel,
 }: LobbyProps) {
   const [showSettings, setShowSettings] = useState(false);
+  const cardRevealRef = useRef<{ closeCard: () => Promise<void> } | null>(null);
 
   if (!roomState) {
     return (
@@ -541,7 +578,10 @@ function LobbyOrGameView({
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col items-center justify-center min-h-[350px] sm:min-h-[400px] relative py-4">
           {roomState.phase === "in-game" && myCard ? (
-            <CardReveal card={myCard} />
+            <CardReveal 
+              card={myCard} 
+              ref={cardRevealRef}
+            />
           ) : roomState.phase === "lobby" ? (
             <div className="text-center space-y-4 opacity-50">
               <div className="text-4xl sm:text-6xl font-thin">ESPERANDO</div>
@@ -567,8 +607,7 @@ function LobbyOrGameView({
         {/* Host Controls - Bottom Fixed or Sticky on Mobile could be better, but inline works if spacing is right */}
         {isHost && (
           <div className="glass-panel p-4 sm:p-6 space-y-6 mt-auto">
-            <div className="flex items-center justify-between">
-              <span className="text-[10px] sm:text-xs uppercase tracking-widest text-neutral-500">Opciones</span>
+            <div className="flex items-center justify-start">
               <button 
                 onClick={() => setShowSettings(!showSettings)} 
                 className="text-[10px] sm:text-xs hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
@@ -577,22 +616,55 @@ function LobbyOrGameView({
               </button>
             </div>
 
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
-              <button
-                disabled={!canStart}
-                onClick={onStartGame}
-                className={`flex-1 py-3 sm:py-4 text-xs sm:text-sm uppercase tracking-widest font-bold transition-all ${
-                  canStart ? "btn-primary" : "opacity-50 cursor-not-allowed border border-white/10 bg-white/5 text-neutral-500"
-                }`}
-              >
-                {roomState.phase === "lobby" ? "EMPEZAR PARTIDA" : "REINICIAR"}
-              </button>
-              
-              {roomState.phase === "in-game" && (
-                <button onClick={onReshuffle} className="btn-secondary px-6 py-3 sm:py-4 text-xs sm:text-sm uppercase tracking-widest">
-                  BARAJAR
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4">
+                <button
+                  disabled={roomState.phase === "lobby" && !canStart}
+                  onClick={async () => {
+                    // Si hay una carta y está abierta, cerrarla primero
+                    if (roomState.phase === "in-game" && myCard && cardRevealRef.current) {
+                      await cardRevealRef.current.closeCard();
+                    }
+                    // Luego ejecutar la acción
+                    onStartGame();
+                  }}
+                  className={`flex-1 py-3 sm:py-4 text-xs sm:text-sm uppercase tracking-widest font-bold transition-all ${
+                    (roomState.phase !== "lobby" || canStart) ? "btn-primary" : "opacity-50 cursor-not-allowed border border-white/10 bg-white/5 text-neutral-500"
+                  }`}
+                >
+                  {roomState.phase === "lobby" ? "EMPEZAR PARTIDA" : "REINICIAR PARTIDA"}
                 </button>
-              )}
+                
+                {roomState.phase === "in-game" && (
+                  <button 
+                    onClick={async () => {
+                      // Si hay una carta y está abierta, cerrarla primero
+                      if (myCard && cardRevealRef.current) {
+                        await cardRevealRef.current.closeCard();
+                      }
+                      // Luego ejecutar la acción
+                      onReshuffle();
+                    }}
+                    className="btn-secondary px-6 py-3 sm:py-4 text-xs sm:text-sm uppercase tracking-widest"
+                  >
+                    BARAJAR CARTAS
+                  </button>
+                )}
+              </div>
+              
+              {/* Explicación de las funciones */}
+              <div className="text-[10px] text-neutral-500 space-y-1 pt-2 border-t border-white/5">
+                {roomState.phase === "lobby" ? (
+                  <p>Inicia una nueva partida con cartas aleatorias</p>
+                ) : roomState.phase === "in-game" ? (
+                  <>
+                    <p><span className="text-white font-medium">REINICIAR:</span> Termina esta partida y empieza una nueva</p>
+                    <p><span className="text-white font-medium">BARAJAR:</span> Cambia las cartas sin terminar la partida</p>
+                  </>
+                ) : (
+                  <p>Termina la partida actual y empieza una nueva desde cero</p>
+                )}
+              </div>
             </div>
 
             <AnimatePresence>
@@ -652,10 +724,22 @@ type CardRevealProps = {
   card: GameCard;
 };
 
-function CardReveal({ card }: CardRevealProps) {
+const CardReveal = React.forwardRef<{ closeCard: () => Promise<void> }, CardRevealProps>(({ card }, ref) => {
   const [revealed, setRevealed] = useState(false);
   const [showParticles, setShowParticles] = useState(false);
   const confettiRef = useConfetti(card.isImpostor, showParticles);
+  const prevCardIdRef = useRef<string | null>(null);
+
+  // Resetear la carta cuando cambia el ID (nueva carta recibida del servidor)
+  // El ID incluye timestamp, así que siempre será único para cada nueva carta
+  useEffect(() => {
+    if (prevCardIdRef.current !== null && prevCardIdRef.current !== card.id) {
+      // Solo resetear si el ID realmente cambió (nueva carta)
+      setRevealed(false);
+      setShowParticles(false);
+    }
+    prevCardIdRef.current = card.id;
+  }, [card.id]);
 
   const handleReveal = () => {
     if (!revealed) {
@@ -666,6 +750,18 @@ function CardReveal({ card }: CardRevealProps) {
     }
     setRevealed((v) => !v);
   };
+
+  // Exponer función para cerrar la carta desde el componente padre
+  useImperativeHandle(ref, () => ({
+    closeCard: async () => {
+      if (revealed) {
+        setRevealed(false);
+        setShowParticles(false);
+        // Esperar a que termine la animación (600ms)
+        await new Promise(resolve => setTimeout(resolve, 600));
+      }
+    }
+  }));
 
   return (
     <div className="relative perspective-1000">
@@ -743,7 +839,9 @@ function CardReveal({ card }: CardRevealProps) {
       </motion.div>
     </div>
   );
-}
+});
+
+CardReveal.displayName = "CardReveal";
 
 type PlayersPanelProps = {
   roomState: RoomState | null;

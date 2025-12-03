@@ -424,8 +424,9 @@ async function buildDeckForRoom(room) {
   playersArray.forEach((player, index) => {
     const isImpostor = impostorIndexes.has(index);
     const base = isImpostor ? impostorBase : crewBase;
+    // Generar un ID único que incluya timestamp para forzar el reset en el cliente
     deck[player.id] = {
-      id: `${room.code}-${player.id}`,
+      id: `${room.code}-${player.id}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
       playerName: base.name,
       team: base.team,
       sport: base.sport,
@@ -513,13 +514,17 @@ io.of(/^\/rooms\/\w{5}$/).on("connection", (socket) => {
       return;
     }
 
+    // REINICIAR PARTIDA: Termina la partida actual (si existe) y empieza una nueva
+    // Esto resetea todo: fase, tiempo de inicio, y genera nuevas cartas
     room.phase = "in-game";
     room.lastGame = { startedAt: Date.now() };
 
     const deck = await buildDeckForRoom(room);
 
+    // Primero actualizar el estado de la sala
     namespace.emit("room_state", publicRoomState(room));
 
+    // Luego enviar las nuevas cartas (esto reseteará las cartas en el cliente)
     Object.entries(deck).forEach(([socketId, card]) => {
       const target = namespace.sockets.get(socketId);
       if (target) {
@@ -530,8 +535,19 @@ io.of(/^\/rooms\/\w{5}$/).on("connection", (socket) => {
 
   socket.on("reshuffle_cards", async () => {
     if (socket.id !== room.hostId) return;
-    if (room.phase !== "in-game") return;
+    if (room.phase !== "in-game") {
+      socket.emit("error_message", "Solo se puede barajar durante una partida en curso.");
+      return;
+    }
+    
+    // BARAJAR CARTAS: Redistribuye las cartas SIN terminar la partida
+    // - NO cambia la fase (sigue "in-game")
+    // - NO resetea el tiempo de inicio
+    // - Solo genera nuevas cartas (puede cambiar quién es impostor)
+    // - La partida sigue activa, solo cambian las cartas
     const deck = await buildDeckForRoom(room);
+    
+    // Enviar las nuevas cartas (esto reseteará las cartas en el cliente)
     Object.entries(deck).forEach(([socketId, card]) => {
       const target = namespace.sockets.get(socketId);
       if (target) {
