@@ -10,6 +10,7 @@ export type GameCard = {
   sport: "football" | "basketball" | "custom" | "all";
   isImpostor: boolean;
   imageUrl?: string | null;
+  funFact?: string | null;
 };
 
 export type RoomState = {
@@ -30,6 +31,7 @@ export type RoomState = {
   players: {
     id: string;
     name: string;
+    avatarSeed?: string;
     isHost: boolean;
     joinedAt: number;
   }[];
@@ -55,6 +57,7 @@ type UseRoomSocketArgs = {
   playerName: string;
   isHost: boolean;
   initialSettings: RoomState["settings"];
+  avatarSeed?: string;
   onCardReceived?: (card: GameCard) => void;
   onGameEnded?: (
     summary: NonNullable<RoomState["lastGame"]>,
@@ -66,6 +69,7 @@ export function useRoomSocket({
   playerName,
   isHost,
   initialSettings,
+  avatarSeed,
   onCardReceived,
   onGameEnded,
 }: UseRoomSocketArgs) {
@@ -99,6 +103,7 @@ export function useRoomSocket({
         query: {
           name: playerName,
           host: isHost ? "1" : "0",
+          avatarSeed: avatarSeed || playerName || "default",
         },
         reconnection: true,
         reconnectionDelay: 2000,
@@ -161,7 +166,11 @@ export function useRoomSocket({
       });
 
       socket.on("kicked", () => {
-        alert("Has sido expulsado de la sala por el host.");
+        // Redirigir a la página principal después de mostrar el mensaje
+        if (typeof window !== "undefined") {
+          alert("Has sido expulsado de la sala por el host.");
+          window.location.href = "/";
+        }
       });
 
       socket.on("room_locked", () => {
@@ -191,12 +200,20 @@ export function useRoomSocket({
     emit("update_settings", partial);
   };
 
+  const updateAvatar = (seed: string) => {
+    console.log("updateAvatar llamado con seed:", seed);
+    emit("update_avatar", seed);
+  };
+
   const startGame = () => emit("start_game");
   const reshuffle = () => emit("reshuffle_cards");
   const endGame = (winner: "crew" | "impostors") =>
     emit("end_game", winner);
   const lockRoom = (locked: boolean) => emit("lock_room", locked);
-  const kickPlayer = (playerId: string) => emit("kick_player", playerId);
+  const kickPlayer = (playerId: string) => {
+    console.log("Expulsando jugador con ID:", playerId);
+    emit("kick_player", playerId);
+  };
   const transferHost = (playerId: string) =>
     emit("transfer_host", playerId);
   const sendChat = (text: string) =>
@@ -206,9 +223,8 @@ export function useRoomSocket({
     connected,
     roomState,
     myCard,
-    messages,
-    sendChat,
     updateSettings,
+    updateAvatar,
     startGame,
     reshuffle,
     endGame,

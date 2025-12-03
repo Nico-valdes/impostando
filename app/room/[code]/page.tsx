@@ -1,20 +1,25 @@
 "use client";
 
 import { useParams, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useRoomSocket, type RoomState, type GameCard } from "../../../hooks/useRoomSocket";
 import { usePlayerStats } from "../../../hooks/usePlayerStats";
 import { useConfetti } from "../../../hooks/useConfetti";
 import { useNotifications } from "../../../hooks/useNotifications";
-import { useAvatar } from "../../../hooks/useAvatar";
+import { useAvatar, generateAvatarUrl, generateDeterministicSeeds } from "../../../hooks/useAvatar";
 import { useShare } from "../../../hooks/useShare";
+import { PlayerSetupModal } from "../../../components/PlayerSetupModal";
 
 export default function RoomPage() {
   const searchParams = useSearchParams();
   const params = useParams<{ code: string }>();
   const roomCode = (params.code ?? "").toUpperCase();
-  const playerName = (searchParams.get("name") || "Jugador").slice(0, 24);
+  const initialName = searchParams.get("name");
+  const initialAvatarSeed = searchParams.get("avatarSeed");
+  const [playerName, setPlayerName] = useState(initialName || "");
+  const [avatarSeed, setAvatarSeed] = useState(initialAvatarSeed || "");
+  const [showSetupModal, setShowSetupModal] = useState(!initialName || !initialAvatarSeed);
   const isHost = searchParams.get("host") === "1" || searchParams.get("host") === "true";
 
   const initialSettings = useMemo(
@@ -41,26 +46,53 @@ export default function RoomPage() {
 
   const { stats, registerGameStart, registerGameEnd } = usePlayerStats(playerName);
   const { notify } = useNotifications();
-  const { avatar, changeAvatar, availableAvatars } = useAvatar(playerName);
+  // Usar el nombre efectivo (del estado o inicial) para el hook de avatar
+  const effectivePlayerName = playerName || initialName || "Jugador";
+  const { avatar, avatarSeed: currentAvatarSeed, changeAvatar } = useAvatar(effectivePlayerName);
   const { share, copied } = useShare();
   const [showAvatarPicker, setShowAvatarPicker] = useState(false);
   const [previousPhase, setPreviousPhase] = useState<RoomState["phase"] | null>(null);
-
-  const handleShare = async () => {
-    const url = typeof window !== "undefined" ? window.location.href : "";
-    const success = await share(url, "Únete a mi partida de Impostando");
-    if (success && !copied) {
-      notify("Link compartido");
-    } else if (success && copied) {
-      notify("Link copiado");
+  
+  // Seeds determinísticos (siempre los mismos 30 avatares)
+  const allAvatarSeeds = useMemo(() => generateDeterministicSeeds(30), []);
+  const AVATARS_PER_PAGE = 12;
+  const totalAvatarPages = Math.ceil(allAvatarSeeds.length / AVATARS_PER_PAGE);
+  
+  // Calcular la página inicial basada en el avatar actual
+  const getInitialPage = useMemo(() => {
+    if (!currentAvatarSeed) return 0;
+    const index = allAvatarSeeds.indexOf(currentAvatarSeed);
+    return index >= 0 ? Math.floor(index / AVATARS_PER_PAGE) : 0;
+  }, [currentAvatarSeed, allAvatarSeeds]);
+  
+  const [avatarPickerPage, setAvatarPickerPage] = useState(getInitialPage);
+  
+  // Avatares de la página actual del selector
+  const currentAvatarPageSeeds = useMemo(() => {
+    const start = avatarPickerPage * AVATARS_PER_PAGE;
+    const end = start + AVATARS_PER_PAGE;
+    return allAvatarSeeds.slice(start, end);
+  }, [avatarPickerPage, allAvatarSeeds]);
+  
+  // Cuando se abre el selector, ir a la página del avatar actual
+  useEffect(() => {
+    if (showAvatarPicker && currentAvatarSeed) {
+      const index = allAvatarSeeds.indexOf(currentAvatarSeed);
+      if (index >= 0) {
+        setAvatarPickerPage(Math.floor(index / AVATARS_PER_PAGE));
+      }
     }
-  };
+  }, [showAvatarPicker, currentAvatarSeed, allAvatarSeeds]);
+
+  // Usar el avatarSeed de la URL o del estado local, o el actual del hook
+  const effectiveAvatarSeed = avatarSeed || initialAvatarSeed || currentAvatarSeed || playerName || "default";
 
   const {
     connected,
     roomState,
     myCard,
     updateSettings,
+    updateAvatar,
     startGame,
     reshuffle,
     endGame,
@@ -69,9 +101,10 @@ export default function RoomPage() {
     transferHost,
   } = useRoomSocket({
     roomCode,
-    playerName,
+    playerName: playerName || initialName || "Jugador",
     isHost,
     initialSettings,
+    avatarSeed: effectiveAvatarSeed,
     onCardReceived: (card) => {
       registerGameStart(card);
       notify(card.isImpostor ? "🎭 Eres el impostor" : "✅ Eres tripulación");
@@ -81,6 +114,24 @@ export default function RoomPage() {
       notify(summary.winner === "crew" ? "✅ Ganó la tripulación" : "🎭 Ganaron los impostores");
     },
   });
+
+  // Si hay avatarSeed en URL, actualizarlo
+  useEffect(() => {
+    if (initialAvatarSeed && initialAvatarSeed !== currentAvatarSeed) {
+      changeAvatar(initialAvatarSeed);
+    }
+  }, [initialAvatarSeed, currentAvatarSeed, changeAvatar]);
+
+  // Actualizar avatar en el servidor cuando se conecta o cuando cambia el seed
+  useEffect(() => {
+    if (connected && updateAvatar && effectiveAvatarSeed) {
+      // Pequeño delay para asegurar que el socket esté listo
+      const timer = setTimeout(() => {
+        updateAvatar(effectiveAvatarSeed);
+      }, 300);
+      return () => clearTimeout(timer);
+    }
+  }, [connected, effectiveAvatarSeed, updateAvatar]);
 
   useEffect(() => {
     if (roomState && roomState.phase !== previousPhase) {
@@ -92,6 +143,49 @@ export default function RoomPage() {
       setPreviousPhase(roomState.phase);
     }
   }, [roomState?.phase, previousPhase, notify]);
+
+  const handleSetupComplete = (name: string, seed: string) => {
+    console.log("Setup completo:", { name, seed });
+    setPlayerName(name);
+    setAvatarSeed(seed);
+    changeAvatar(seed);
+    setShowSetupModal(false);
+    // Actualizar URL sin recargar
+    const newParams = new URLSearchParams(searchParams.toString());
+    newParams.set("name", name);
+    newParams.set("avatarSeed", seed);
+    window.history.replaceState({}, "", `${window.location.pathname}?${newParams.toString()}`);
+    // Actualizar en el servidor cuando esté conectado
+    // Usar un delay más largo para asegurar que el socket esté listo
+    if (connected && updateAvatar) {
+      console.log("Enviando avatar al servidor:", seed);
+      setTimeout(() => {
+        updateAvatar(seed);
+      }, 500);
+    } else {
+      console.log("Esperando conexión para enviar avatar...");
+      // Si no está conectado, esperar a que se conecte
+      const checkConnection = setInterval(() => {
+        if (connected && updateAvatar) {
+          console.log("Conexión establecida, enviando avatar:", seed);
+          updateAvatar(seed);
+          clearInterval(checkConnection);
+        }
+      }, 100);
+      // Limpiar después de 5 segundos
+      setTimeout(() => clearInterval(checkConnection), 5000);
+    }
+  };
+
+  const handleShare = async () => {
+    const url = typeof window !== "undefined" ? window.location.href : "";
+    const success = await share(url, "Únete a mi partida de Impostando");
+    if (success && !copied) {
+      notify("Link compartido");
+    } else if (success && copied) {
+      notify("Link copiado");
+    }
+  };
 
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
@@ -109,47 +203,154 @@ export default function RoomPage() {
           <div className="flex items-center gap-4 sm:gap-6">
             <div className="flex items-center gap-3">
               <div className="w-8 h-8 bg-white text-black flex items-center justify-center font-bold text-xs rounded-sm">IM</div>
-              <div className="flex flex-col">
-                <span className="hidden sm:block text-[10px] tracking-widest text-neutral-500 uppercase">Protocolo</span>
-                <span className="font-mono text-sm tracking-wider">{roomCode}</span>
-              </div>
+                          <div className="flex flex-col">
+                            <span className="hidden sm:block text-[10px] tracking-widest text-neutral-500 uppercase">Sala</span>
+                            <span className="font-mono text-sm tracking-wider">{roomCode}</span>
+                          </div>
             </div>
             
             <div className="h-6 w-px bg-white/10 hidden sm:block" />
             
             <div className="relative">
-              <button 
-                onClick={() => setShowAvatarPicker(!showAvatarPicker)}
-                className="group flex items-center gap-2 hover:bg-white/5 px-2 sm:px-3 py-1.5 transition-colors rounded-sm"
-              >
-                <span className="text-lg">{avatar}</span>
-                <span className="text-xs text-neutral-400 group-hover:text-white transition-colors max-w-[80px] truncate hidden sm:block">{playerName}</span>
-              </button>
-              
-              {showAvatarPicker && (
-                <div className="absolute top-full left-0 mt-2 p-2 glass-panel w-64 grid grid-cols-6 gap-1 z-50">
-                  {availableAvatars.map(av => (
-                    <button
-                      key={av}
-                      onClick={(e) => { e.stopPropagation(); changeAvatar(av); setShowAvatarPicker(false); }}
-                      className="p-2 hover:bg-white/10 transition-colors rounded-sm"
-                    >
-                      {av}
-                    </button>
-                  ))}
+              {!showSetupModal && (
+                <button 
+                  onClick={() => setShowAvatarPicker(!showAvatarPicker)}
+                  className="group flex items-center gap-2 hover:bg-white/5 px-2 sm:px-3 py-1.5 transition-colors rounded-sm"
+                >
+                  <img 
+                    src={avatar} 
+                    alt="Avatar" 
+                    className="w-8 h-8 rounded-full border border-white/20"
+                  />
+                  <span className="text-xs text-neutral-400 group-hover:text-white transition-colors max-w-[80px] truncate hidden sm:block">{playerName}</span>
+                </button>
+              )}
+              {showSetupModal && (
+                <div className="flex items-center gap-2 px-2 sm:px-3 py-1.5">
+                  <div className="w-8 h-8 rounded-full border border-white/20 bg-white/5 flex items-center justify-center">
+                    <span className="text-xs text-neutral-500">?</span>
+                  </div>
+                  <span className="text-xs text-neutral-500 hidden sm:block">Configurando...</span>
                 </div>
+              )}
+              
+              {!showSetupModal && showAvatarPicker && (
+                <>
+                  {/* Overlay para cerrar en móvil */}
+                  <div 
+                    className="fixed inset-0 z-40 md:hidden"
+                    onClick={() => setShowAvatarPicker(false)}
+                  />
+                  {/* Selector de avatar */}
+                  <div className="absolute top-full left-0 mt-2 p-3 sm:p-4 glass-panel w-[calc(100vw-2rem)] max-w-80 z-50 md:relative md:mt-2 md:left-auto md:w-80">
+                    <div className="flex items-center justify-between mb-3">
+                      <p className="text-xs text-neutral-500 uppercase tracking-wider">Cambiar Avatar</p>
+                      <button
+                        onClick={() => setShowAvatarPicker(false)}
+                        className="md:hidden text-neutral-400 hover:text-white text-lg"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-neutral-500">Página {avatarPickerPage + 1} / {totalAvatarPages}</span>
+                      </div>
+                      <div className="grid grid-cols-4 gap-2 sm:gap-3">
+                        {currentAvatarPageSeeds.map(seed => {
+                          const avatarUrl = generateAvatarUrl(seed);
+                          const isSelected = currentAvatarSeed === seed;
+                          return (
+                            <button
+                              key={seed}
+                              onClick={(e) => { 
+                                e.stopPropagation(); 
+                                changeAvatar(seed); 
+                                if (updateAvatar && connected) {
+                                  updateAvatar(seed);
+                                }
+                                setShowAvatarPicker(false); 
+                              }}
+                              className={`relative aspect-square rounded-lg overflow-hidden border-2 transition-all ${
+                                isSelected
+                                  ? "border-white scale-105"
+                                  : "border-white/20 hover:border-white/40 active:scale-95"
+                              }`}
+                            >
+                              <img
+                                src={avatarUrl}
+                                alt="Avatar option"
+                                className="w-full h-full object-cover"
+                              />
+                              {isSelected && (
+                                <div className="absolute inset-0 bg-white/10 flex items-center justify-center">
+                                  <span className="text-white text-sm">✓</span>
+                                </div>
+                              )}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      
+                      {/* Navegación de páginas */}
+                      {totalAvatarPages > 1 && (
+                        <div className="flex items-center justify-between pt-2">
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAvatarPickerPage((prev) => Math.max(0, prev - 1));
+                            }}
+                            disabled={avatarPickerPage === 0}
+                            className="px-2 py-1 text-[10px] border border-white/20 hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            ←
+                          </button>
+                          <div className="flex gap-1">
+                            {Array.from({ length: totalAvatarPages }).map((_, i) => (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setAvatarPickerPage(i);
+                                }}
+                                className={`w-1.5 h-1.5 rounded-full transition-all ${
+                                  avatarPickerPage === i
+                                    ? "bg-white"
+                                    : "bg-white/20 hover:bg-white/40"
+                                }`}
+                              />
+                            ))}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setAvatarPickerPage((prev) => Math.min(totalAvatarPages - 1, prev + 1));
+                            }}
+                            disabled={avatarPickerPage === totalAvatarPages - 1}
+                            className="px-2 py-1 text-[10px] border border-white/20 hover:border-white/40 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                          >
+                            →
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </div>
 
           <div className="flex items-center gap-3 sm:gap-4">
-            <div className="hidden md:flex items-center gap-4 text-xs font-mono text-neutral-500">
-              <span className={`flex items-center gap-2 ${connected ? "text-emerald-500" : "text-red-500"}`}>
-                <span className="w-1.5 h-1.5 rounded-full bg-current" />
-                {connected ? "ONLINE" : "OFFLINE"}
-              </span>
-              <span>{roomState?.players.length ?? 0} AGENTES</span>
-            </div>
+                        <div className="hidden md:flex items-center gap-4 text-xs font-mono text-neutral-500">
+                          <span className={`flex items-center gap-2 ${connected ? "text-emerald-500" : "text-red-500"}`}>
+                            <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                            {connected ? "ONLINE" : "OFFLINE"}
+                          </span>
+                          <span>{roomState?.players.length ?? 0} JUGADORES</span>
+                        </div>
             
             <button 
               onClick={handleShare}
@@ -191,9 +392,20 @@ export default function RoomPage() {
                   onKick={kickPlayer}
                   onTransferHost={transferHost}
                   getAvatar={(name) => {
-                    if (name === playerName) return avatar;
-                    if (typeof window !== "undefined") return localStorage.getItem(`avatar_${name}`) || "😀";
-                    return "😀";
+                    if (name === playerName) {
+                      // Para mi propio avatar, solo mostrar si el setup está completo
+                      if (showSetupModal) {
+                        return generateAvatarUrl("placeholder");
+                      }
+                      return avatar;
+                    }
+                    // Buscar el avatarSeed del jugador en el estado de la sala
+                    const player = roomState?.players.find((p) => p.name === name);
+                    if (player?.avatarSeed) {
+                      return generateAvatarUrl(player.avatarSeed);
+                    }
+                    // Fallback: usar el nombre como seed (generará un avatar consistente)
+                    return generateAvatarUrl(name || "default");
                   }}
                 />
               }
@@ -216,9 +428,20 @@ export default function RoomPage() {
               onKick={kickPlayer}
               onTransferHost={transferHost}
               getAvatar={(name) => {
-                if (name === playerName) return avatar;
-                if (typeof window !== "undefined") return localStorage.getItem(`avatar_${name}`) || "😀";
-                return "😀";
+                if (name === playerName) {
+                  // Para mi propio avatar, solo mostrar si el setup está completo
+                  if (showSetupModal) {
+                    return generateAvatarUrl("placeholder");
+                  }
+                  return avatar;
+                }
+                // Buscar el avatarSeed del jugador en el estado de la sala
+                const player = roomState?.players.find((p) => p.name === name);
+                if (player?.avatarSeed) {
+                  return generateAvatarUrl(player.avatarSeed);
+                }
+                // Fallback: usar el nombre como seed
+                return generateAvatarUrl(name || "default");
               }}
             />
           </aside>
@@ -229,6 +452,14 @@ export default function RoomPage() {
       {sidebarOpen && (
         <div className="fixed inset-0 z-30 bg-black/50 lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
+
+      {/* Modal para configurar perfil si no está configurado */}
+      <PlayerSetupModal
+        isOpen={showSetupModal}
+        onComplete={handleSetupComplete}
+        defaultName={playerName}
+        title="Configura tu Perfil"
+      />
     </div>
   );
 }
@@ -243,7 +474,7 @@ type LobbyProps = {
   onReshuffle: () => void;
   onEndGame: (winner: "crew" | "impostors") => void;
   onLockRoom: (locked: boolean) => void;
-  playersPanel: React.ReactNode;
+  playersPanel: ReactNode;
 };
 
 function LobbyOrGameView({
@@ -268,7 +499,7 @@ function LobbyOrGameView({
         className="h-full flex flex-col items-center justify-center space-y-4 text-neutral-500"
       >
         <div className="w-12 h-12 border-t-2 border-l-2 border-white animate-spin" />
-        <span className="text-xs uppercase tracking-widest">Estableciendo conexión segura...</span>
+        <span className="text-xs uppercase tracking-widest">Conectando a la sala...</span>
         {!connected && <span className="text-[10px] text-red-500">Servidor no responde</span>}
       </motion.div>
     );
@@ -289,9 +520,9 @@ function LobbyOrGameView({
         {/* Status Bar */}
         <div className="flex items-center justify-between pb-4 border-b border-white/5">
           <div className="flex flex-col">
-            <span className="text-[10px] uppercase tracking-widest text-neutral-500">Estado de la misión</span>
+            <span className="text-[10px] uppercase tracking-widest text-neutral-500">Estado del juego</span>
             <span className="text-xl font-light text-white">
-              {roomState.phase === "lobby" ? "PREPARACIÓN" : roomState.phase === "in-game" ? "EN PROGRESO" : "FINALIZADO"}
+              {roomState.phase === "lobby" ? "ESPERANDO" : roomState.phase === "in-game" ? "JUGANDO" : "TERMINADO"}
             </span>
           </div>
           
@@ -313,12 +544,12 @@ function LobbyOrGameView({
             <CardReveal card={myCard} />
           ) : roomState.phase === "lobby" ? (
             <div className="text-center space-y-4 opacity-50">
-              <div className="text-4xl sm:text-6xl font-thin">WAITING</div>
-              <p className="text-xs sm:text-sm font-mono tracking-widest">ESPERANDO INICIO DE PROTOCOLO</p>
+              <div className="text-4xl sm:text-6xl font-thin">ESPERANDO</div>
+              <p className="text-xs sm:text-sm font-mono tracking-widest">ESPERANDO QUE EMPIECE LA PARTIDA</p>
             </div>
           ) : (
             <div className="glass-panel p-6 sm:p-8 w-full max-w-md mx-auto text-center space-y-6">
-              <h3 className="text-xs sm:text-sm uppercase tracking-widest text-neutral-400">Resultado de la Misión</h3>
+              <h3 className="text-xs sm:text-sm uppercase tracking-widest text-neutral-400">Resultado de la Partida</h3>
               {isHost && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <button onClick={() => onEndGame("crew")} className="btn-primary py-3 sm:py-4 bg-emerald-500/90 border-emerald-500 text-black font-bold text-sm uppercase tracking-wider hover:bg-emerald-400 transition-colors">
@@ -337,12 +568,12 @@ function LobbyOrGameView({
         {isHost && (
           <div className="glass-panel p-4 sm:p-6 space-y-6 mt-auto">
             <div className="flex items-center justify-between">
-              <span className="text-[10px] sm:text-xs uppercase tracking-widest text-neutral-500">Panel de Control</span>
+              <span className="text-[10px] sm:text-xs uppercase tracking-widest text-neutral-500">Opciones</span>
               <button 
                 onClick={() => setShowSettings(!showSettings)} 
                 className="text-[10px] sm:text-xs hover:text-white transition-colors border-b border-transparent hover:border-white pb-0.5"
               >
-                {showSettings ? "CERRAR" : "CONFIGURACIÓN"}
+                {showSettings ? "CERRAR" : "OPCIONES"}
               </button>
             </div>
 
@@ -354,7 +585,7 @@ function LobbyOrGameView({
                   canStart ? "btn-primary" : "opacity-50 cursor-not-allowed border border-white/10 bg-white/5 text-neutral-500"
                 }`}
               >
-                {roomState.phase === "lobby" ? "INICIAR SECUENCIA" : "REINICIAR"}
+                {roomState.phase === "lobby" ? "EMPEZAR PARTIDA" : "REINICIAR"}
               </button>
               
               {roomState.phase === "in-game" && (
@@ -378,7 +609,7 @@ function LobbyOrGameView({
                       {["football", "basketball", "all"].map((s) => (
                         <button
                           key={s}
-                          onClick={() => onUpdateSettings({ sport: s as any })}
+                          onClick={() => onUpdateSettings({ sport: s as RoomState["settings"]["sport"] })}
                           className={`flex-1 py-2 text-xs border transition-colors ${
                             roomState.settings.sport === s ? "bg-white text-black border-white" : "border-white/10 hover:border-white/30"
                           }`}
@@ -423,16 +654,13 @@ type CardRevealProps = {
 
 function CardReveal({ card }: CardRevealProps) {
   const [revealed, setRevealed] = useState(false);
-  const [justRevealed, setJustRevealed] = useState(false);
   const [showParticles, setShowParticles] = useState(false);
   const confettiRef = useConfetti(card.isImpostor, showParticles);
 
   const handleReveal = () => {
     if (!revealed) {
-      setJustRevealed(true);
       setShowParticles(true);
       setTimeout(() => {
-        setJustRevealed(false);
         setShowParticles(false);
       }, 2000);
     }
@@ -459,13 +687,13 @@ function CardReveal({ card }: CardRevealProps) {
       >
         {/* Front (Hidden) */}
         <div className="absolute inset-0 backface-hidden bg-neutral-900 border border-white/10 p-2 rounded-sm">
-          <div className="h-full w-full border border-dashed border-white/20 flex flex-col items-center justify-center gap-4 bg-[url('/noise.png')] rounded-sm">
+          <div className="h-full w-full border border-dashed border-white/20 flex flex-col items-center justify-center gap-4 rounded-sm">
             <div className="w-16 h-16 sm:w-20 sm:h-20 border border-white/20 rounded-full flex items-center justify-center">
               <span className="text-xl sm:text-2xl">?</span>
             </div>
             <div className="text-center">
-              <p className="text-[10px] sm:text-xs font-mono tracking-widest text-neutral-500">CONFIDENCIAL</p>
-              <p className="text-[8px] sm:text-[10px] text-neutral-600 mt-2 uppercase">Tocar para descifrar</p>
+              <p className="text-[10px] sm:text-xs font-mono tracking-widest text-neutral-500">TU CARTA</p>
+              <p className="text-[8px] sm:text-[10px] text-neutral-600 mt-2 uppercase">Tocá para ver tu carta</p>
             </div>
           </div>
         </div>
@@ -478,7 +706,7 @@ function CardReveal({ card }: CardRevealProps) {
           style={{ transform: "rotateY(180deg)" }}
         >
           <div className="flex justify-between items-start">
-            <span className="font-mono text-[10px] opacity-50 tracking-widest">{card.isImpostor ? "ERR_404" : "AUTH_OK"}</span>
+            <span className="font-mono text-[10px] opacity-50 tracking-widest">{card.isImpostor ? "IMPOSTOR" : "TRIPULACIÓN"}</span>
             <div className={`w-1.5 h-1.5 sm:w-2 sm:h-2 rounded-full ${card.isImpostor ? "bg-red-500 animate-pulse" : "bg-emerald-500"}`} />
           </div>
 
@@ -496,12 +724,19 @@ function CardReveal({ card }: CardRevealProps) {
             <div className="text-center space-y-1 sm:space-y-2">
               <h3 className="text-lg sm:text-2xl font-bold tracking-tight leading-tight">{card.playerName}</h3>
               <p className="text-xs sm:text-sm font-mono text-neutral-400">{card.team}</p>
+              {card.funFact && !card.isImpostor && (
+                <div className="mt-3 pt-3 border-t border-white/10">
+                  <p className="text-[10px] sm:text-xs text-neutral-500 italic leading-relaxed">
+                    "{card.funFact}"
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 
           <div className={`text-center py-3 border-t ${card.isImpostor ? "border-red-500/20 text-red-400" : "border-emerald-500/20 text-emerald-400"}`}>
             <p className="text-[8px] sm:text-[10px] uppercase tracking-[0.2em]">
-              {card.isImpostor ? "OBJETIVO: INFILTRARSE" : "OBJETIVO: DETECTAR"}
+              {card.isImpostor ? "SOS EL IMPOSTOR" : "ENCONTRÁ AL IMPOSTOR"}
             </p>
           </div>
         </div>
@@ -529,7 +764,7 @@ function PlayersPanel({
 }: PlayersPanelProps) {
   return (
     <div className="space-y-4">
-      <h3 className="text-[10px] uppercase tracking-widest text-neutral-500 lg:hidden">Agentes</h3>
+      <h3 className="text-[10px] uppercase tracking-widest text-neutral-500 lg:hidden">Jugadores</h3>
       <div className="space-y-1">
         {roomState?.players.map((p) => {
           const isMe = p.name === me;
@@ -542,23 +777,29 @@ function PlayersPanel({
               }`}
             >
               <div className="flex items-center gap-3">
-                <div className="w-8 h-8 flex items-center justify-center bg-white/5 text-lg">
-                  {getAvatar(p.name)}
-                </div>
+                <img 
+                  src={getAvatar(p.name)} 
+                  alt={p.name}
+                  className="w-8 h-8 rounded-full border border-white/20 object-cover"
+                />
                 <div className="flex flex-col">
                   <span className={`text-sm ${isMe ? "text-white font-bold" : "text-neutral-400 group-hover:text-neutral-200"}`}>
                     {p.name}
                   </span>
-                  {isCurrentHost && <span className="text-[8px] uppercase tracking-wider text-neutral-600">Líder de Escuadrón</span>}
+                  {isCurrentHost && <span className="text-[8px] uppercase tracking-wider text-neutral-600">Anfitrión</span>}
                 </div>
               </div>
 
               {isHost && !isMe && (
                 <button
-                  onClick={() => onKick(p.id)}
-                  className="opacity-0 group-hover:opacity-100 text-[10px] text-red-500 hover:underline transition-opacity"
+                  onClick={() => {
+                    if (confirm(`¿Expulsar a ${p.name} de la sala?`)) {
+                      onKick(p.id);
+                    }
+                  }}
+                  className="opacity-0 group-hover:opacity-100 text-[10px] text-red-500 hover:text-red-400 active:scale-95 transition-all px-2 py-1 border border-red-500/30 hover:border-red-500/50 rounded"
                 >
-                  ELIMINAR
+                  EXPULSAR
                 </button>
               )}
             </div>

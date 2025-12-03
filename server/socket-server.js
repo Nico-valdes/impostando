@@ -1,5 +1,7 @@
 const http = require("http");
 const { Server } = require("socket.io");
+const fs = require("fs");
+const path = require("path");
 
 // Configuración básica del servidor HTTP + Socket.IO
 const PORT = process.env.IMPOSTANDO_SOCKET_PORT || 4000;
@@ -169,6 +171,7 @@ function publicRoomState(room) {
     players: Array.from(room.players.values()).map((p) => ({
       id: p.id,
       name: p.name,
+      avatarSeed: p.avatarSeed || p.name || "default",
       isHost: p.isHost,
       joinedAt: p.joinedAt,
     })),
@@ -297,43 +300,91 @@ async function fetchBasketballPlayersFromTheSportsDB() {
   return players;
 }
 
+// Cargar cartas personalizadas desde JSON
+function loadCustomCardsFromJSON() {
+  try {
+    // Intentar diferentes rutas posibles
+    const possiblePaths = [
+      path.join(__dirname, "../data/customCards.json"),
+      path.join(__dirname, "../../data/customCards.json"),
+      path.join(process.cwd(), "data/customCards.json"),
+      path.join(process.cwd(), "impostando/data/customCards.json"),
+    ];
+    
+    for (const jsonPath of possiblePaths) {
+      if (fs.existsSync(jsonPath)) {
+        console.log(`Cargando customCards.json desde: ${jsonPath}`);
+        const data = fs.readFileSync(jsonPath, "utf8");
+        const cards = JSON.parse(data);
+        console.log(`Cargadas ${cards.length} cartas personalizadas`);
+        return cards;
+      }
+    }
+    console.warn("No se encontró customCards.json en ninguna ruta esperada");
+  } catch (error) {
+    console.error("Error cargando customCards.json:", error);
+  }
+  return [];
+}
+
 async function buildDeckForRoom(room) {
   const settings = room.settings;
+  const isSpecialRoom = room.code === "00000";
 
   let pool = [];
-  if (settings.sport === "football" || settings.sport === "all") {
-    pool = pool.concat(SAMPLE_PLAYERS.football);
-    // Intentar obtener jugadores reales desde TheSportsDB
-    try {
-      const apiPlayers = await fetchFootballPlayersFromTheSportsDB();
-      if (apiPlayers.length > 0) {
-        pool = pool.concat(apiPlayers);
-      }
-    } catch (e) {
-      // Si falla, seguimos con datos locales
-    }
-  }
-  if (settings.sport === "basketball" || settings.sport === "all") {
-    pool = pool.concat(SAMPLE_PLAYERS.basketball);
-    // Intentar obtener jugadores reales desde TheSportsDB
-    try {
-      const apiPlayers = await fetchBasketballPlayersFromTheSportsDB();
-      if (apiPlayers.length > 0) {
-        pool = pool.concat(apiPlayers);
-      }
-    } catch (e) {
-      // Si falla, seguimos con datos locales
-    }
-  }
 
-  if (settings.customCards && settings.customCards.length > 0) {
-    const custom = settings.customCards.map((label) => ({
-      name: label,
-      team: "Custom",
-      sport: settings.sport === "all" ? "custom" : settings.sport,
-      imageUrl: null,
-    }));
-    pool = pool.concat(custom);
+  // Si es la sala especial "00000", usar solo las cartas personalizadas del JSON
+  if (isSpecialRoom) {
+    const customCards = loadCustomCardsFromJSON();
+    if (customCards.length > 0) {
+      pool = customCards.map((card) => ({
+        name: card.name,
+        team: card.category || "Personalizado",
+        sport: "custom",
+        imageUrl: card.photo || null,
+        funFact: card.funFact || "",
+      }));
+    } else {
+      // Fallback si no hay JSON
+      pool = SAMPLE_PLAYERS.football.concat(SAMPLE_PLAYERS.basketball);
+    }
+  } else {
+    // Lógica normal para otras salas
+    if (settings.sport === "football" || settings.sport === "all") {
+      pool = pool.concat(SAMPLE_PLAYERS.football);
+      // Intentar obtener jugadores reales desde TheSportsDB
+      try {
+        const apiPlayers = await fetchFootballPlayersFromTheSportsDB();
+        if (apiPlayers.length > 0) {
+          pool = pool.concat(apiPlayers);
+        }
+      } catch (e) {
+        // Si falla, seguimos con datos locales
+      }
+    }
+    if (settings.sport === "basketball" || settings.sport === "all") {
+      pool = pool.concat(SAMPLE_PLAYERS.basketball);
+      // Intentar obtener jugadores reales desde TheSportsDB
+      try {
+        const apiPlayers = await fetchBasketballPlayersFromTheSportsDB();
+        if (apiPlayers.length > 0) {
+          pool = pool.concat(apiPlayers);
+        }
+      } catch (e) {
+        // Si falla, seguimos con datos locales
+      }
+    }
+
+    if (settings.customCards && settings.customCards.length > 0) {
+      const custom = settings.customCards.map((label) => ({
+        name: label,
+        team: "Custom",
+        sport: settings.sport === "all" ? "custom" : settings.sport,
+        imageUrl: null,
+        funFact: "",
+      }));
+      pool = pool.concat(custom);
+    }
   }
 
   if (pool.length === 0) {
@@ -367,6 +418,7 @@ async function buildDeckForRoom(room) {
     team: "Tu carta es distinta. Engaña al resto sin que lo noten.",
     sport: crewBase.sport,
     imageUrl: null,
+    funFact: null,
   };
 
   playersArray.forEach((player, index) => {
@@ -379,6 +431,7 @@ async function buildDeckForRoom(room) {
       sport: base.sport,
       isImpostor,
       imageUrl: base.imageUrl || null,
+      funFact: base.funFact || null,
     };
   });
 
@@ -403,10 +456,12 @@ io.of(/^\/rooms\/\w{5}$/).on("connection", (socket) => {
 
   const isFirst = room.players.size === 0;
   const isHost = isFirst || (wantsHost && !room.hostId);
+  const avatarSeed = socket.handshake.query.avatarSeed || playerName || "default";
 
   const player = {
     id: socket.id,
     name: playerName,
+    avatarSeed: avatarSeed,
     joinedAt: Date.now(),
     isHost,
   };
@@ -432,6 +487,17 @@ io.of(/^\/rooms\/\w{5}$/).on("connection", (socket) => {
         : room.settings.customCards,
     };
     namespace.emit("room_state", publicRoomState(room));
+  });
+
+  socket.on("update_avatar", (avatarSeed) => {
+    const currentPlayer = room.players.get(socket.id);
+    if (currentPlayer && avatarSeed && typeof avatarSeed === "string") {
+      currentPlayer.avatarSeed = avatarSeed;
+      console.log(`Avatar actualizado para ${currentPlayer.name}: ${avatarSeed}`);
+      namespace.emit("room_state", publicRoomState(room));
+    } else {
+      console.log(`Error actualizando avatar: player=${!!currentPlayer}, seed=${avatarSeed}, type=${typeof avatarSeed}`);
+    }
   });
 
   socket.on("lock_room", (locked) => {
@@ -500,13 +566,30 @@ io.of(/^\/rooms\/\w{5}$/).on("connection", (socket) => {
   });
 
   socket.on("kick_player", (targetId) => {
-    if (socket.id !== room.hostId) return;
-    if (!targetId || typeof targetId !== "string") return;
-    if (!room.players.has(targetId)) return;
+    if (socket.id !== room.hostId) {
+      console.log(`Intento de expulsar por no-host: ${socket.id}`);
+      return;
+    }
+    if (!targetId || typeof targetId !== "string") {
+      console.log(`ID de jugador inválido: ${targetId}`);
+      return;
+    }
+    if (!room.players.has(targetId)) {
+      console.log(`Jugador no encontrado en la sala: ${targetId}`);
+      return;
+    }
+    const targetPlayer = room.players.get(targetId);
     const targetSocket = namespace.sockets.get(targetId);
     if (targetSocket) {
+      console.log(`Expulsando jugador: ${targetPlayer?.name} (${targetId})`);
       targetSocket.emit("kicked");
       targetSocket.disconnect(true);
+      // Remover del mapa de jugadores
+      room.players.delete(targetId);
+      // Actualizar estado de la sala
+      namespace.emit("room_state", publicRoomState(room));
+    } else {
+      console.log(`Socket no encontrado para expulsar: ${targetId}`);
     }
   });
 

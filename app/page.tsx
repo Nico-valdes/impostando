@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { FormEvent, useMemo, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import { PlayerSetupModal } from "../components/PlayerSetupModal";
 
 function generateRoomCode() {
   if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
@@ -26,6 +27,8 @@ export default function HomePage() {
   const [famousPlayers, setFamousPlayers] = useState(true);
   const [customCardInput, setCustomCardInput] = useState("");
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showJoinModal, setShowJoinModal] = useState(false);
+  const [pendingJoinCode, setPendingJoinCode] = useState("");
 
   const customCards = useMemo(
     () => customCardInput.split("\n").map((l) => l.trim()).filter(Boolean),
@@ -53,14 +56,19 @@ export default function HomePage() {
 
   const handleJoinRoom = (e: FormEvent) => {
     e.preventDefault();
-    const trimmedName = playerName.trim() || "Jugador";
     const code = joinCode.trim().toUpperCase();
     if (!code || code.length !== 5) return;
+    setPendingJoinCode(code);
+    setShowJoinModal(true);
+  };
+
+  const handleJoinWithSetup = (name: string, avatarSeed: string) => {
     const params = new URLSearchParams({
-      name: trimmedName,
+      name: name.slice(0, 24),
       host: "0",
+      avatarSeed: avatarSeed,
     });
-    router.push(`/room/${code}?${params.toString()}`);
+    router.push(`/room/${pendingJoinCode}?${params.toString()}`);
   };
 
   return (
@@ -87,18 +95,18 @@ export default function HomePage() {
               Impos<span className="font-bold">tando</span>
             </h1>
             <p className="mx-auto lg:mx-0 max-w-md text-base sm:text-lg text-neutral-400 leading-relaxed">
-              Un juego de deducción social con temática deportiva. Encuentra al impostor antes de que sea demasiado tarde.
+              Un juego de deducción social con temática deportiva. Ya tenés un código? Elegí tu avatar y unite a la partida.
             </p>
           </div>
 
           <div className="hidden lg:grid grid-cols-2 gap-4 text-sm text-neutral-500">
             <div className="glass-panel p-4 flex flex-col gap-2">
               <span className="text-white font-medium">Crear</span>
-              <p>Configura tu sala, elige el deporte y desafía a tus amigos.</p>
+              <p>Configurá tu sala, elegí el deporte y desafiá a tus amigos.</p>
             </div>
             <div className="glass-panel p-4 flex flex-col gap-2">
               <span className="text-white font-medium">Unirse</span>
-              <p>Ingresa con un código y demuestra tus conocimientos.</p>
+              <p>Ya tenés un código? Ingresá y demostrá tus conocimientos.</p>
             </div>
           </div>
         </div>
@@ -205,7 +213,7 @@ export default function HomePage() {
                   type="submit"
                   className="btn-primary w-full py-4 mt-4 text-sm tracking-widest uppercase active:scale-[0.98] transition-transform"
                 >
-                  Iniciar Protocolo
+                  Empezar Partida
                 </button>
               </form>
             </div>
@@ -214,7 +222,7 @@ export default function HomePage() {
           {/* Join Room */}
           <div className="glass-panel p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <span className="text-sm text-neutral-400">¿Ya tienes código?</span>
+              <span className="text-sm text-neutral-400">¿Ya tenés código?</span>
             </div>
             <form onSubmit={handleJoinRoom} className="flex flex-col sm:flex-row gap-3 sm:gap-0">
               <input
@@ -235,6 +243,14 @@ export default function HomePage() {
 
         </div>
       </motion.div>
+
+      {/* Modal para configurar perfil al unirse */}
+      <PlayerSetupModal
+        isOpen={showJoinModal}
+        onComplete={handleJoinWithSetup}
+        defaultName={playerName}
+        title="Unirse a la Partida"
+      />
     </div>
   );
 }

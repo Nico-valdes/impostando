@@ -6,7 +6,7 @@ export function useConfetti(isImpostor: boolean, trigger: boolean) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!trigger || !containerRef.current) return;
+    if (!trigger || !containerRef.current || typeof document === "undefined") return;
 
     const container = containerRef.current;
     const particles: HTMLDivElement[] = [];

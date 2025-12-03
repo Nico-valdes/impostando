@@ -1,0 +1,45 @@
+[
+  {
+    "name": "Albertito",
+    "photo": "/players/albertito.png",
+    "funFact": "bueno papito",
+    "category": "personal"
+  },
+  {
+    "name": "Cheno",
+    "photo": "/players/cheno.jpg",
+    "funFact": "es un hombre vencido laburador",
+    "category": "personal"
+  },
+  {
+    "name": "Juani",
+    "photo": "/players/juani.jpg",
+    "funFact": "juega al basquet con los codos",
+    "category": "personal"
+  },
+  {
+    "name": "Inchauspe",
+    "photo": "/players/inchauspe.jpg",
+    "funFact": "pasapalabra",
+    "category": "personal"
+  },
+  {
+    "name": "Tomi",
+    "photo": "/players/tomi.jpg",
+    "funFact": "Labura en el mcdonalds y es negro",
+    "category": "personal"
+  },
+  {
+    "name": "Nico",
+    "photo": "/players/nico.jpg",
+    "funFact": "me gusta poner ejemplos: Vos tenes una novia gorda..",
+    "category": "personal"
+  },
+  {
+    "name": "Fabri",
+    "photo": "/players/fabri.jpeg",
+    "funFact": "fabri sacate esa camiseta de argentina que la representas mal",
+    "category": "personal"
+  }
+]
+
