@@ -1,0 +1,23 @@
+{
+  "name": "impostando-socket-server",
+  "version": "1.0.0",
+  "description": "Socket.IO server for Impostando game",
+  "main": "socket-server.js",
+  "scripts": {
+    "start": "node socket-server.js",
+    "dev": "nodemon socket-server.js"
+  },
+  "keywords": ["socket.io", "game", "impostor"],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
+

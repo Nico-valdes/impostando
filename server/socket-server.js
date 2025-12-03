@@ -4,7 +4,8 @@ const fs = require("fs");
 const path = require("path");
 
 // Configuración básica del servidor HTTP + Socket.IO
-const PORT = process.env.IMPOSTANDO_SOCKET_PORT || 4000;
+// Replit usa PORT, Railway/Render también pueden usarlo
+const PORT = process.env.PORT || process.env.IMPOSTANDO_SOCKET_PORT || 4000;
 
 /**
  * Estructura de sala en memoria

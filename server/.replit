@@ -1,0 +1,6 @@
+language = "nodejs"
+run = "node socket-server.js"
+
+[deploy]
+run = ["sh", "-c", "node socket-server.js"]
+
