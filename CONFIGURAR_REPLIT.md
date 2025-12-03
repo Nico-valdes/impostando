@@ -43,3 +43,4 @@ npm run dev
 2. Revisa la consola del navegador (F12) para ver errores de conexión
 3. Asegúrate de que `.env.local` esté en la raíz del proyecto (no en `app/` ni `server/`)
 
+

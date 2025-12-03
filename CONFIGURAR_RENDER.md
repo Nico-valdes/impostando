@@ -58,3 +58,4 @@ https://impostando.onrender.com/rooms/[CODIGO_SALA]
 
 No necesitas agregar el path `/rooms/`, el código lo hace automáticamente.
 
+

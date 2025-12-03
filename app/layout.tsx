@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Impostando · Juego de roles retro",
-  description: "Juego de impostor con estética arcade retro",
+  title: "Impostando · Juego de deducción social",
+  description: "Un juego de deducción social con temática deportiva. Ya tenés un código? Elegí tu avatar y unite a la partida.",
 };
 
 export default function RootLayout({

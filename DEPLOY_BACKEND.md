@@ -119,3 +119,4 @@ NEXT_PUBLIC_WS_URL=https://tu-backend.railway.app
 
 Todas estas plataformas te darán una URL HTTPS. Asegúrate de que tu servidor Socket.IO esté configurado para aceptar conexiones desde cualquier origen (ya lo tienes con `cors: { origin: "*" }`).
 
+
