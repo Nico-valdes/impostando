@@ -80,6 +80,8 @@ export function useRoomSocket({
   const socketRef = useRef<Socket | null>(null);
   const onCardReceivedRef = useRef<UseRoomSocketArgs["onCardReceived"] | undefined>(undefined);
   const onGameEndedRef = useRef<UseRoomSocketArgs["onGameEnded"] | undefined>(undefined);
+  const disconnectTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const isDisconnectingRef = useRef(false);
 
   useEffect(() => {
     onCardReceivedRef.current = onCardReceived;
@@ -180,12 +182,90 @@ export function useRoomSocket({
 
     connect();
 
+    // Manejar desconexión diferida cuando la app está en segundo plano (móvil)
+    const handleVisibilityChange = () => {
+      if (typeof document === "undefined") return;
+      
+      if (document.hidden) {
+        // La app está en segundo plano, iniciar timer de 2 minutos
+        console.log("📱 App en segundo plano, iniciando timer de desconexión (2 min)");
+        isDisconnectingRef.current = true;
+        
+        // Limpiar timer anterior si existe
+        if (disconnectTimerRef.current) {
+          clearTimeout(disconnectTimerRef.current);
+        }
+        
+        // Desconectar después de 2 minutos
+        disconnectTimerRef.current = setTimeout(() => {
+          if (socketRef.current && isDisconnectingRef.current) {
+            console.log("⏰ Timer expirado, desconectando...");
+            socketRef.current.disconnect();
+            setConnected(false);
+            isDisconnectingRef.current = false;
+          }
+        }, 2 * 60 * 1000); // 2 minutos
+      } else {
+        // La app volvió a primer plano, cancelar desconexión
+        if (disconnectTimerRef.current) {
+          console.log("✅ App vuelta a primer plano, cancelando desconexión");
+          clearTimeout(disconnectTimerRef.current);
+          disconnectTimerRef.current = null;
+          isDisconnectingRef.current = false;
+          
+          // Reconectar si se desconectó
+          if (socketRef.current && !socketRef.current.connected) {
+            console.log("🔄 Reconectando...");
+            socketRef.current.connect();
+          }
+        }
+      }
+    };
+
+    // Manejar cuando la ventana pierde el foco (desktop)
+    const handleBlur = () => {
+      if (typeof window === "undefined") return;
+      // Solo aplicar en móvil o si no hay soporte para visibilitychange
+      if (typeof document !== "undefined" && !document.hidden) {
+        handleVisibilityChange();
+      }
+    };
+
+    const handleFocus = () => {
+      if (typeof window === "undefined") return;
+      if (typeof document !== "undefined" && !document.hidden) {
+        handleVisibilityChange();
+      }
+    };
+
+    // Agregar listeners
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("blur", handleBlur);
+      window.addEventListener("focus", handleFocus);
+    }
+
     return () => {
+      // Limpiar timers y listeners
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (disconnectTimerRef.current) {
+        clearTimeout(disconnectTimerRef.current);
+        disconnectTimerRef.current = null;
+      }
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+      if (typeof window !== "undefined") {
+        window.removeEventListener("blur", handleBlur);
+        window.removeEventListener("focus", handleFocus);
+      }
       if (socketRef.current) {
         socketRef.current.disconnect();
         socketRef.current = null;
       }
+      isDisconnectingRef.current = false;
     };
     // Solo debe recrearse cuando cambia realmente la identidad de la sala / jugador
   }, [roomCode, playerName, isHost, initialSettings]);
